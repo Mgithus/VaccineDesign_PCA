@@ -1,0 +1,162 @@
+# Import necessary libraries
+import numpy as np
+import scipy.io as sio
+from scipy.spatial.distance import pdist, squareform
+from sklearn.decomposition import PCA
+import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
+from sklearn.impute import SimpleImputer
+import pandas as pd
+from sklearn.decomposition import PCA
+from sklearn.impute import SimpleImputer
+from scipy.spatial.distance import pdist, squareform
+import numpy as np
+import matplotlib.pyplot as plt
+import re
+from matplotlib.ticker import ScalarFormatter
+
+
+
+
+
+data = sio.loadmat('/content/drive/MyDrive/protein_data1 (1).mat')['protein_data1']
+sample_sizes = [1897]
+data = np.transpose(data)
+
+# Loop over the different sample sizes
+for i, size in enumerate(sample_sizes):
+    # Select the top size columns
+    data_subset = data[:, :size]
+    print(f"data_subset: {data_subset}")
+
+    # Impute missing values using multiple imputation
+    data_subset = np.where(data_subset == -1, np.nan, data_subset)
+    imputer = SimpleImputer(strategy='most_frequent')
+    data_subset = imputer.fit_transform(data_subset)
+
+    # Normalize the data using z-score normalization
+    data_subset = (data_subset - np.mean(data_subset, axis=0)) / np.std(data_subset, axis=0)
+    print(f"normalized_data_subset: {data_subset}")
+
+    # Transform the data using square root transformation
+    data_subset = np.sqrt(data_subset)
+
+    # Convert binary data into continuous form using Jaccard distance
+    dist_jaccard = pdist(data_subset, metric='jaccard')
+    D = squareform(dist_jaccard)
+    print(f'D: {D}')
+
+    # Check for variables with zero variance
+    variances = np.var(D, axis=0)
+    idx = np.where(variances == 0)[0]
+    if len(idx) > 0:
+        print('Variables with zero variance:', idx)
+
+    # Check for variables that are perfectly correlated
+    corr = np.corrcoef(D.T)
+    corr[np.isnan(corr)] = 0
+    corr[np.isinf(corr)] = 0
+    idx = np.where(np.abs(corr - np.eye(corr.shape[0])) >= 1e-10)
+    if len(idx[0]) > 0:
+        idx = np.unique(idx[0])
+
+    # Remove highly correlated variables using VIF analysis
+    if 'idx' in locals():
+        vif = np.diag(np.linalg.inv(np.corrcoef(D.T)))
+        idx = np.where(vif > 10)[0]
+        D = np.delete(D, idx, axis=1)
+
+    # Check if there are any variables left after removing highly correlated variables
+    if D.shape[1] == 0:
+        print('No variables left after removing highly correlated variables')
+        continue
+
+    # Perform PCA on the Jaccard distance matrix
+    pca_jaccard = PCA()
+    pca_jaccard.fit(D)
+    eigenvalues_jaccard = pca_jaccard.explained_variance_
+    eigenvectors_jaccard = pca_jaccard.components_
+
+    # Calculate loading scores
+    loading_scores = eigenvectors_jaccard.T * np.sqrt(eigenvalues_jaccard)
+
+    # Assume that feature_names is a list of your feature names
+    feature_names = ['Feature' + str(i) for i in range(1, 452)]
+
+    # Get the loading scores for the top principal components
+    top_pc_loading_scores = loading_scores[:, :1]  # Updated to keep only the 1st principal component
+
+    # Create a DataFrame for the loading scores
+    columns = ['1st Principal Component']
+    loading_scores_df = pd.DataFrame(top_pc_loading_scores, index=feature_names, columns=columns)
+
+    # Sort the loading scores in descending order
+    sorted_loading_scores_df = loading_scores_df.apply(lambda x: x.abs()).sort_values(by='1st Principal Component',
+                                                                                        ascending=False)
+
+    # Add a column for the position of each feature in the sorted list
+    sorted_loading_scores_df['Position'] = range(1, len(sorted_loading_scores_df) + 1)
+
+    # Specify the indices of interest
+    indices_of_interest = [0, 1, 151, 243, 163, 165, 167, 168, 172, 182, 347,
+                            350, 359, 367, 370, 379, 270, 352, 218, 134, 178,
+                            195, 201, 259, 309, 353, 366, 147, 386]
+
+    # Extract loading scores for the specified indices
+    loading_scores_of_interest = loading_scores[indices_of_interest, :1]  # Updated to keep only the 1st principal component
+
+    # Create a DataFrame for the loading scores
+    columns = ['1st Principal Component']
+    loading_scores_df = pd.DataFrame(loading_scores_of_interest, index=indices_of_interest, columns=columns)
+
+    # Print the DataFrame
+    print("Loading Scores for the 1st Principal Component:")
+    print(loading_scores_df)
+
+    # Get the positions of the specified indices in the sorted list
+    positions_in_sorted_list = {
+        '1st Principal Component': [sorted_loading_scores_df.index.get_loc(index) + 1
+                                     if index in sorted_loading_scores_df.index else -1
+                                     for index in indices_of_interest]
+    }
+
+    pd.set_option('display.max_rows', None)
+    pd.set_option('display.max_columns', None)
+    pd.set_option('display.width', None)
+    pd.set_option('display.max_colwidth', None)
+    # Print the sorted loading scores with positions
+    print("Sorted Loading Scores in Descending Order:")
+    print(sorted_loading_scores_df)
+
+    # Set the threshold for coloring
+    threshold = 0.001
+
+    # Get the indices of positive loading scores for the 1st principal component
+    positive_indices_1st_pc = [i for i in range(len(top_pc_loading_scores)) if top_pc_loading_scores[i] >= 0]
+
+    # Filter indices of interest based on positive loading scores
+    filtered_indices_1st_pc = list(set(positive_indices_1st_pc) & set(indices_of_interest))
+
+
+    # Extract positive loading scores and corresponding feature names for the 1st principal component
+    positive_loading_scores_1st_pc = top_pc_loading_scores[filtered_indices_1st_pc]
+
+    # Extract only numeric part from feature names
+    numeric_only_feature_names = [re.search(r'\d+', feature_names[i]).group() for i in filtered_indices_1st_pc]
+    
+    # Create a figure for the positive loading scores of the 1st principal component
+    
+    plt.figure(figsize=(12, 5))
+    colors = ['purple' if score >= threshold else 'darkblue' for score in positive_loading_scores_1st_pc]
+    positive_loading_scores_1st_pc_flat = positive_loading_scores_1st_pc.ravel()
+    plt.bar(range(len(filtered_indices_1st_pc)), positive_loading_scores_1st_pc_flat, color=colors)
+    plt.xlabel('Feature Index', fontsize=13)
+    plt.ylabel('Loading Scores - 1st PC ($\\times 10^{3}$)', fontsize=13)
+    plt.title('Positive Loading Scores of RMT Predicted Correlated Features', fontsize=14, weight='bold')
+    plt.xticks(range(len(filtered_indices_1st_pc)), numeric_only_feature_names, rotation=90, fontsize=10)
+    plt.xticks(rotation=0)
+    plt.yticks(fontsize=11)
+    plt.gca().yaxis.set_major_formatter(ScalarFormatter(useMathText=True))
+    plt.ticklabel_format(axis='y', style='sci', scilimits=(0,0))
+    plt.grid(False)
+    plt.show()
